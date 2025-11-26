@@ -1,4 +1,5 @@
 #include <WiFi.h>
+#include <PubSubClient.h>
 #include "DHT.h"
 
 // Simulação Vital Charger IoT
@@ -18,28 +19,53 @@ float TEMP_HIGH = 37.5;
 unsigned long lastPrint = 0;
 int bpm = 0;
 
+// WIFI + MQTT -------------------------
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+const char* mqtt_server = "broker.hivemq.com";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+// -------------------------------------
+
+void conectaWiFi() {
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(200);
+  }
+}
+
+void conectaMQTT() {
+  while (!client.connected()) {
+    client.connect("VitalCharger_Rodrigo");
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(pinLED, OUTPUT);
   pinMode(pinBuzzer, OUTPUT);
   dht.begin();
 
-  Serial.println("=== Vital Charger IoT (Modo Simulado) ===");
-  Serial.println("Conectando Wi-Fi (simulado)...");
-  delay(1000);
-  Serial.println("Conectado! (simulação)");
+  conectaWiFi();
+
+  client.setServer(mqtt_server, 1883);
+  conectaMQTT();
+
+  Serial.println("=== Vital Charger IoT MQTT ===");
 }
 
 void loop() {
+  if (!client.connected()) conectaMQTT();
+  client.loop();
+
   // Simular leituras
-  int rawECG = analogRead(pinADC); // valor do potenciômetro
+  int rawECG = analogRead(pinADC);
   float temp = dht.readTemperature();
   float hum = dht.readHumidity();
 
-  // Converter sinal analógico para BPM aproximado
   bpm = map(rawECG, 0, 4095, 50, 130);
 
-  // Lógica de alerta
   bool alerta = false;
   String tipo = "";
 
@@ -59,19 +85,24 @@ void loop() {
     noTone(pinBuzzer);
   }
 
-  // Impressão simulando publicação MQTT
   if (millis() - lastPrint > 3000) {
     lastPrint = millis();
+
+    // Criar JSON SIMPLES
+    String payload = "{";
+    payload += "\"bpm\":" + String(bpm) + ",";
+    payload += "\"temp\":" + String(temp) + ",";
+    payload += "\"umidade\":" + String(hum) + ",";
+    payload += "\"alerta\":" + String(alerta ? "true" : "false") + ",";
+    payload += "\"tipo\":\"" + tipo + "\"";
+    payload += "}";
+
+    // Enviar para o broker
+    client.publish("vital/charger/rodrigo", payload.c_str());
+
     Serial.println("==========================");
-    Serial.printf("BPM: %d\n", bpm);
-    Serial.printf("Temp: %.1f °C | Umidade: %.1f %%\n", temp, hum);
-    if (alerta) {
-      Serial.print("⚠ ALERTA: ");
-      Serial.println(tipo);
-      Serial.println("(Mensagem seria enviada via MQTT)");
-    } else {
-      Serial.println("Status normal - dados enviados (simulação)");
-    }
+    Serial.println("MQTT ENVIADO ->");
+    Serial.println(payload);
   }
 
   delay(100);
